@@ -12,4 +12,6 @@
 #define ADDRTYPE_IPV6 4
 
 
+#define PASSWORD "1234"
+
 #endif
