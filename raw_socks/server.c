@@ -178,7 +178,6 @@ void child_core(int fd)
 
     int optval = 1;
     if (setsockopt(remote_fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval)) == -1) {
-// if (setsockopt(remote_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) == -1) {
         clean_exit(errno, "set socket option error", 1, fd);
     }
         
@@ -247,14 +246,14 @@ int server_core(const struct sockaddr *addr, socklen_t alen)
 
     int sockopt_on = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &sockopt_on, sizeof(sockopt_on)) == -1) {
-        clean_exit(errno, "set socket error", 0);
+        clean_exit(errno, "set socket option error", 0);
     }
 
     if (bind(server_fd, addr, alen) < 0) {
         clean_exit(errno, "cannot bind socket", 0);
     }
 
-    if (listen(server_fd, 0) < 0) {
+    if (listen(server_fd, SOMAXCONN) < 0) {
         clean_exit(errno, "cannot listen socket", 0);
     }
    
