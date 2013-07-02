@@ -1,7 +1,7 @@
 CC=clang
 BIN=server
 CFLAGS=-Wall
-LIBS=-lcrypto
+LIBS=-lcrypto -pthread
 OBJECTS=server.o encrypt.o md5.o rc4.o
 
 
