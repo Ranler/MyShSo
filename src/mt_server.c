@@ -100,9 +100,12 @@ static int read_addr(int fd, uint8_t *buf, struct sockaddr** addr, int *addr_len
 	    memset(addr_in, 0, sizeof(struct sockaddr_in));
             addr_in->sin_family = AF_INET;
             memcpy(&(addr_in->sin_addr), buf, 4);
-            addr_in->sin_port = ntohs(*(uint16_t*)(buf+4)); // check
+	    memcpy(&(addr_in->sin_port), buf+4, 2);
+            printf("INFO: ipv4 addr \"%s:%hu\"\n",
+		   inet_ntoa(addr_in->sin_addr),
+		   ntohs(addr_in->sin_port));
 
-            printf("INFO: ipv4 addr \"%s\"\n", inet_ntoa(addr_in->sin_addr));
+
 	    *addr = (struct sockaddr*)addr_in;
 	    *addr_len = sizeof(struct sockaddr_in);
             break;

@@ -58,21 +58,14 @@ static void clean_exit(int err, const char *msg, int fds_num, ...)
  */ 
 inline static int recv_buf(int fd, void *buf, size_t len)
 {
-    int size = recv(fd, buf, len, 0);
-    if (size > 0) {
-        shadow_encrypt(buf, &chd_crypto, size);
-    }
-    return size;
+    return recv(fd, buf, len, 0);
 }
 
 /* return:
  *     real send size (must be equal with parameter `len`) 
  */ 
-
 inline static int send_buf_all(int fd, void *buf, size_t len)
 {
-    shadow_decrypt(buf, &chd_crypto, len);
-    
     size_t real_len = 0;
     int size = send(fd, buf, len, 0);
     real_len += size;    
@@ -83,31 +76,49 @@ inline static int send_buf_all(int fd, void *buf, size_t len)
     return real_len;
 }
 
+inline static int crypt_recv_buf(int fd, void *buf, size_t len)
+{
+    int size = recv_buf(fd, buf, len);
+    if (size > 0) {
+      shadow_decrypt(buf, &chd_crypto, size);
+    }
+    return size;
+}
+
+
+inline static int crypt_send_buf_all(int fd, void *buf, size_t len)
+{
+    shadow_encrypt(buf, &chd_crypto, len);
+    return send_buf_all(fd, buf, len);
+}
+
 static int read_addr(int fd, uint8_t *buf, struct sockaddr** addr, int *addr_len) {
-    if (recv_buf(fd, buf, 1) <= 0) return -1;
+    if (crypt_recv_buf(fd, buf, 1) <= 0) return -1;
     uint8_t addrtype = buf[0];
 
     switch(addrtype) {
         case ADDRTYPE_IPV4:    /* |addr(4)|+|port(2)|*/
-  	    if (recv_buf(fd, buf, 6) != 6) return -1;
+  	    if (crypt_recv_buf(fd, buf, 6) != 6) return -1;
 
 	    struct sockaddr_in *addr_in
 	        = (struct sockaddr_in*)malloc(sizeof(struct sockaddr_in));
 	    memset(addr_in, 0, sizeof(struct sockaddr_in));
             addr_in->sin_family = AF_INET;
             memcpy(&(addr_in->sin_addr), buf, 4);
-            addr_in->sin_port = ntohs(*(uint16_t*)(buf+4)); // check
+	    memcpy(&(addr_in->sin_port), buf+4, 2);
+            printf("INFO: ipv4 addr \"%s:%hu\"\n",
+		   inet_ntoa(addr_in->sin_addr),
+		   ntohs(addr_in->sin_port));
 
-            printf("INFO: ipv4 addr \"%s\"\n", inet_ntoa(addr_in->sin_addr));
 	    *addr = (struct sockaddr*)addr_in;
 	    *addr_len = sizeof(struct sockaddr_in);
             break;
 
         case ADDRTYPE_DOMAIN:    /* |addr_len(1)|+|host(addr_len)|+|port(2)| */
-	    if (recv_buf(fd, buf, 1) != 1) return -1;
+	    if (crypt_recv_buf(fd, buf, 1) != 1) return -1;
 
 	    uint8_t domain_addr_len = buf[0];
-            if (recv_buf(fd, buf, domain_addr_len + 2) != (domain_addr_len + 2)) return -1;
+            if (crypt_recv_buf(fd, buf, domain_addr_len + 2) != (domain_addr_len + 2)) return -1;
             char domain_port_str[8];
             sprintf(domain_port_str, "%hu", ntohs(*(uint16_t*)(buf+domain_addr_len)));
 
@@ -136,7 +147,7 @@ static int read_addr(int fd, uint8_t *buf, struct sockaddr** addr, int *addr_len
 	    break;
 
         case ADDRTYPE_IPV6:  /* |addr(16)|+|port(2)|*/
-            if (recv_buf(fd, buf, 18) != 18) return -1;
+            if (crypt_recv_buf(fd, buf, 18) != 18) return -1;
 
 	    struct sockaddr_in6 *addr_in6
 	        = (struct sockaddr_in6*)malloc(sizeof(struct sockaddr_in6));
@@ -199,7 +210,7 @@ void child_core(int fd)
     int read_size;
     while (poll(fds, 2, -1) > 0) {
         if (fds[0].revents & (POLLIN | POLLHUP)) {
-            read_size = recv_buf(fd, buf, BUF_SIZE);
+            read_size = crypt_recv_buf(fd, buf, BUF_SIZE);
             if (read_size > 0) {
                 if (send_buf_all(remote_fd, buf, read_size) < read_size) break;
             }
@@ -216,7 +227,7 @@ void child_core(int fd)
         if (fds[1].revents & (POLLIN | POLLHUP)) {
             read_size = recv_buf(remote_fd, buf, BUF_SIZE);
             if (read_size > 0) {
-                if (send_buf_all(fd, buf, read_size) < read_size) break;
+                if (crypt_send_buf_all(fd, buf, read_size) < read_size) break;
             }
             else if (read_size == 0) {
                 fds[1].fd = -1;
@@ -281,11 +292,7 @@ int server_core(const struct sockaddr *addr, socklen_t alen)
 
 int main(int argc, char *argv[])
 {
-
-    uint8_t *pwd = (uint8_t*)PASSWORD;
-    uint8_t crypt_method = METHOD_SHADOWCRYPT;
-    make_encryptor(NULL, &crypto, crypt_method, pwd);
-
+    make_encryptor(NULL, &crypto, METHOD_SHADOWCRYPT, (uint8_t*)PASSWORD);
 
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
