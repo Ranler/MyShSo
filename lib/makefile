@@ -1,6 +1,6 @@
 CC=gcc
 LD=ld
-CFLAGS=-Wall
+CFLAGS=-Wall -fPIC
 LDFLAGS=-shared -fPIC
 OBJECTS=encrypt.o md5.o rc4.o
 TARGET=libshso.so
