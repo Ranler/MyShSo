@@ -1,5 +1,5 @@
 CC=clang
-CFLAGS=-Wall -I../lib/
+CFLAGS=-Wall -Wextra -Werror -Wconversion -Wshadow -I../lib/
 LDFLAGS=-lcrypto -L../lib/ -lshso
 OBJECTS=mp_server.o
 BIN=../bin/mp_server

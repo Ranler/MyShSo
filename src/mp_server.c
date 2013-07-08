@@ -52,53 +52,42 @@ static void clean_exit(int err, const char *msg, int fds_num, ...)
 }
 
 /* return:
- *     > 0: received size
- *     = 0: EOF
- *      -1: ERROR
- */ 
-inline static int recv_buf(int fd, void *buf, size_t len)
-{
-    return recv(fd, buf, len, 0);
-}
-
-/* return:
  *     real send size (must be equal with parameter `len`) 
  */ 
-inline static int send_buf_all(int fd, void *buf, size_t len)
+inline static size_t sendall(int fd, void *buf, size_t len, int flags)
 {
-    size_t real_len = 0;
-    int size = send(fd, buf, len, 0);
-    real_len += size;    
-    while (size > 0 && real_len < len) {
-        size = send(fd, (char*)buf+real_len, len-real_len, 0);
-        real_len += size;        
+    size_t ready_len = 0;
+    while (ready_len < len) {
+        int size = send(fd, (char*)buf+ready_len, len-ready_len, flags);
+	if (size < 0) break;
+	ready_len += (size_t)size;
     }
-    return real_len;
+    return ready_len;
 }
 
-inline static int crypt_recv_buf(int fd, void *buf, size_t len)
+inline static int crypt_recv(int fd, void *buf, size_t len)
 {
-    int size = recv_buf(fd, buf, len);
+    int size = recv(fd, buf, len, 0);
     if (size > 0) {
-      shadow_decrypt(buf, &chd_crypto, size);
+      shadow_decrypt(buf, &chd_crypto, (size_t)size);
     }
     return size;
 }
 
 
-inline static int crypt_send_buf_all(int fd, void *buf, size_t len)
+inline static size_t crypt_sendall(int fd, void *buf, size_t len)
 {
     shadow_encrypt(buf, &chd_crypto, len);
-    return send_buf_all(fd, buf, len);
+    return sendall(fd, buf, len, 0);
 }
 
-static int read_addr(int fd, uint8_t *buf, struct sockaddr** addr, int *addr_len) {
-    if (crypt_recv_buf(fd, buf, 1) <= 0) return -1;
+static int read_addr(int fd, uint8_t *buf, struct sockaddr** addr, size_t *addr_len) {
+    if (crypt_recv(fd, buf, 1) <= 0) return -1;
     uint8_t addrtype = buf[0];
 
     switch(addrtype) {
         case ADDRTYPE_IPV4:    /* |addr(4)|+|port(2)|*/
-  	    if (crypt_recv_buf(fd, buf, 6) != 6) return -1;
+  	    if (crypt_recv(fd, buf, 6) != 6) return -1;
 
 	    struct sockaddr_in *addr_in
 	        = (struct sockaddr_in*)malloc(sizeof(struct sockaddr_in));
@@ -115,10 +104,10 @@ static int read_addr(int fd, uint8_t *buf, struct sockaddr** addr, int *addr_len
             break;
 
         case ADDRTYPE_DOMAIN:    /* |addr_len(1)|+|host(addr_len)|+|port(2)| */
-	    if (crypt_recv_buf(fd, buf, 1) != 1) return -1;
+	    if (crypt_recv(fd, buf, 1) != 1) return -1;
 
 	    uint8_t domain_addr_len = buf[0];
-            if (crypt_recv_buf(fd, buf, domain_addr_len + 2) != (domain_addr_len + 2)) return -1;
+            if (crypt_recv(fd, buf, domain_addr_len + 2) != (domain_addr_len + 2)) return -1;
             char domain_port_str[8];
             sprintf(domain_port_str, "%hu", ntohs(*(uint16_t*)(buf+domain_addr_len)));
 
@@ -147,7 +136,7 @@ static int read_addr(int fd, uint8_t *buf, struct sockaddr** addr, int *addr_len
 	    break;
 
         case ADDRTYPE_IPV6:  /* |addr(16)|+|port(2)|*/
-            if (crypt_recv_buf(fd, buf, 18) != 18) return -1;
+            if (crypt_recv(fd, buf, 18) != 18) return -1;
 
 	    struct sockaddr_in6 *addr_in6
 	        = (struct sockaddr_in6*)malloc(sizeof(struct sockaddr_in6));
@@ -176,7 +165,7 @@ void child_core(int fd)
 
 
     uint8_t buf[BUF_SIZE];
-    int remote_addr_len;
+    size_t remote_addr_len;
     struct sockaddr *remote_addr;
     if (read_addr(fd, buf, &remote_addr, &remote_addr_len) != 0) {
         clean_exit(errno, "get remote addr error", 1, fd);
@@ -207,14 +196,16 @@ void child_core(int fd)
     fds[0].events = POLLIN | POLLERR | POLLHUP;
     fds[1].events = POLLIN | POLLERR | POLLHUP;
 
-    int read_size;
+    size_t read_size;
+    int rc;
     while (poll(fds, 2, -1) > 0) {
         if (fds[0].revents & (POLLIN | POLLHUP)) {
-            read_size = crypt_recv_buf(fd, buf, BUF_SIZE);
-            if (read_size > 0) {
-                if (send_buf_all(remote_fd, buf, read_size) < read_size) break;
+            rc = crypt_recv(fd, buf, BUF_SIZE);
+	    if (rc > 0) {
+	        read_size = (size_t)rc;
+		if (sendall(remote_fd, buf, read_size, 0) < read_size) break;
             }
-            else if (read_size == 0) {
+            else if (rc == 0) {
                 fds[0].fd = -1;
                 shutdown(fd, SHUT_RD);
                 shutdown(remote_fd, SHUT_WR);
@@ -225,9 +216,10 @@ void child_core(int fd)
         }
         
         if (fds[1].revents & (POLLIN | POLLHUP)) {
-            read_size = recv_buf(remote_fd, buf, BUF_SIZE);
+            rc = recv(remote_fd, buf, BUF_SIZE, 0);
             if (read_size > 0) {
-                if (crypt_send_buf_all(fd, buf, read_size) < read_size) break;
+	        read_size = (size_t)rc;
+		if (crypt_sendall(fd, buf, read_size) < read_size) break;
             }
             else if (read_size == 0) {
                 fds[1].fd = -1;
@@ -290,7 +282,7 @@ int server_core(const struct sockaddr *addr, socklen_t alen)
     }
 }
 
-int main(int argc, char *argv[])
+int main()
 {
     make_encryptor(NULL, &crypto, METHOD_SHADOWCRYPT, (uint8_t*)PASSWORD);
 
