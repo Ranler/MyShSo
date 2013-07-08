@@ -24,9 +24,11 @@ make_app ()
     case $1 in
 	"make")
 	    make -f mp.make
+	    make -f mt.make
 	    ;;
 	"clean")
 	    make -f mp.make clean
+	    make -f mt.make clean
     esac
     
     cd -
