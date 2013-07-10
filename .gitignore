@@ -1,0 +1,14 @@
+# Object files
+*.o
+
+# Libraries
+*.a
+*.so
+
+# others
+*.pyc
+
+
+# folders
+bin/*
+test/log
